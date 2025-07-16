@@ -61,7 +61,7 @@ class ImageProperty(ABC):
         return is_issue
 
 
-def calc_avg_brightness(image: Image) -> float:
+def calc_avg_brightness(image: Image, brightness_formula: int = 1) -> float:
     stat = ImageStat.Stat(image)
     try:
         red, green, blue = stat.mean
@@ -72,12 +72,12 @@ def calc_avg_brightness(image: Image) -> float:
             stat.mean[0],
         )  # deals with black and white images
 
-    cur_bright: float = calculate_brightness(red, green, blue)
+    cur_bright: float = calculate_brightness(red, green, blue, brightness_formula=brightness_formula)
     return cur_bright
 
 
 @overload
-def calculate_brightness(red: float, green: float, blue: float) -> float: ...
+def calculate_brightness(red: float, green: float, blue: float, brightness_formula: int = 1) -> float: ...
 
 
 @overload
@@ -85,6 +85,7 @@ def calculate_brightness(
     red: "np.ndarray[Any, Any]",
     green: "np.ndarray[Any, Any]",
     blue: "np.ndarray[Any, Any]",
+    brightness_formula: int = 1
 ) -> "np.ndarray[Any, Any]": ...
 
 
@@ -92,16 +93,39 @@ def calculate_brightness(
     red: Union[float, "np.ndarray[Any, Any]"],
     green: Union[float, "np.ndarray[Any, Any]"],
     blue: Union[float, "np.ndarray[Any, Any]"],
+    brightness_formula: int = 1
 ) -> Union[float, "np.ndarray[Any, Any]"]:
-    cur_bright = (
-        np.sqrt(0.241 * (red * red) + 0.691 * (green * green) + 0.068 * (blue * blue))
-    ) / 255
+    print('current brightness_formula:', brightness_formula, '\n')
+    if brightness_formula == 1: #套件原本的公式
+      print("brightness_formula 1 \n")
+      cur_bright = (
+          np.sqrt(0.241 * (red * red) + 0.691 * (green * green) + 0.068 * (blue * blue))
+      ) / 255
+    elif brightness_formula == 2: #常用公式
+      print("brightness_formula 2\n")
+      cur_bright = (
+          0.2126 * red + 0.7152 * green + 0.0722 * blue
+      ) / 255
+    elif brightness_formula == 3: #另一個常用公式
+      cur_bright = (
+          0.299 * red + 0.587 * green + 0.114 * blue
+      ) / 255
+    elif brightness_formula == 4: #套件公式改係數
+      cur_bright = (
+          np.sqrt(0.299 * (red * red) + 0.587 * (green * green) + 0.114 * (blue * blue))
+      ) / 255
+    elif brightness_formula == 5: #取平均
+      cur_bright = (
+          (red + green + blue) / 3
+      ) / 255
+    else:
+        raise ValueError(f"Unknown formula: {brightness_formula}")
 
     return cur_bright
 
 
 def calc_percentile_brightness(
-    image: Image, percentiles: List[int]
+    image: Image, percentiles: List[int], brightness_formula: int = 1
 ) -> "np.ndarray[Any, Any]":
     imarr = np.asarray(image)
     if len(imarr.shape) == 3:
@@ -111,8 +135,8 @@ def calc_percentile_brightness(
             imarr[:, :, 2].astype("int"),
         )
         pixel_brightness = calculate_brightness(
-            r, g, b
-        )  # np.sqrt(0.241 * r * r + 0.691 * g * g + 0.068 * b * b)
+            r, g, b, brightness_formula=brightness_formula
+        )  #原本的公式(預設): np.sqrt(0.241 * r * r + 0.691 * g * g + 0.068 * b * b)
     else:
         pixel_brightness = imarr / 255.0
     perc_values: "np.ndarray[Any, Any]" = np.percentile(pixel_brightness, percentiles)
@@ -121,6 +145,23 @@ def calc_percentile_brightness(
 
 class BrightnessProperty(ImageProperty):
     name: str = "brightness"
+
+    @staticmethod
+    def check_params(**kwargs: Any) -> None:
+        allowed_kwargs: Dict[str, Any] = {
+            "image": Image,
+            "dark_issue_data": pd.DataFrame,
+            "threshold": float,
+            "brightness_formula": int,
+        }
+
+        for name, value in kwargs.items():
+            if name not in allowed_kwargs:
+                raise ValueError(f"{name} is not a valid keyword argument.")
+            if value is not None and not isinstance(value, allowed_kwargs[name]):
+                raise ValueError(
+                    f"Valid type for keyword argument {name} can only be {allowed_kwargs[name]}. {name} cannot be type {type(name)}. "
+                )
 
     @property
     def score_columns(self) -> List[str]:
@@ -136,13 +177,13 @@ class BrightnessProperty(ImageProperty):
             )
         ]
 
-    def calculate(self, image: Image) -> Dict[str, Union[float, str]]:
+    def calculate(self, image: Image, brightness_formula: int = 1) -> Dict[str, Union[float, str]]:
         percentiles = [1, 5, 10, 15, 90, 95, 99]
-        perc_values = calc_percentile_brightness(image, percentiles=percentiles)
+        perc_values = calc_percentile_brightness(image, percentiles=percentiles, brightness_formula=brightness_formula)
         raw_values = {
             f"brightness_perc_{p}": value for p, value in zip(percentiles, perc_values)
         }
-        raw_values[self.name] = calc_avg_brightness(image)
+        raw_values[self.name] = calc_avg_brightness(image, brightness_formula=brightness_formula)
         return raw_values
 
     def get_scores(
@@ -419,3 +460,4 @@ def get_image_mode(image: Image) -> str:
             return "L"
         else:
             return "UNK"
+
