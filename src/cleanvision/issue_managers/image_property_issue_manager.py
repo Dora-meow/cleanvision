@@ -29,12 +29,19 @@ def compute_scores(
     dataset: Dataset,
     to_compute: List[str],
     image_properties: Dict[str, ImageProperty],
+    params: Dict[str, Dict[str, Any]]
 ) -> Dict[str, Union[str, int, float]]:
     result: Dict[str, Union[int, str, float]] = {"index": index}
     image = dataset[index]
     if image:
         for issue_type in to_compute:
-            result = {**result, **image_properties[issue_type].calculate(image)}
+            param_kwargs = {
+                k: v for k, v in params.get(issue_type, {}).items() if "formula" in k
+            }
+            result = {
+                **result,
+                **image_properties[issue_type].calculate(image, **param_kwargs)
+            }
     return result
 
 
@@ -144,7 +151,8 @@ class ImagePropertyIssueManager(IssueManager):
                 ):
                     results.append(
                         compute_scores(
-                            idx, dataset, to_be_computed, self.image_properties
+                            idx, dataset, to_be_computed, self.image_properties, 
+                            params=self.params,
                         )
                     )
             else:
@@ -154,6 +162,7 @@ class ImagePropertyIssueManager(IssueManager):
                         "dataset": dataset,
                         "to_compute": to_be_computed,
                         "image_properties": self.image_properties,
+                        "params": self.params,
                     }
                     for idx in dataset.index
                 ]
