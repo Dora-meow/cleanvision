@@ -450,6 +450,11 @@ def get_image_mode(image: Image) -> str:
     if image.mode:
         image_mode = image.mode
         assert isinstance(image_mode, str)
+        if image_mode != "L":
+            imarr = np.asarray(image)
+            #mode是RGB也要檢查是否三通道相同
+            if len(imarr.shape) == 3 and (np.diff(imarr.reshape(-1, 3).T, axis=0) == 0).all() :
+                image_mode = "L"
         return image_mode
     else:
         imarr = np.asarray(image)
