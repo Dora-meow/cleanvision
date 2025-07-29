@@ -95,14 +95,14 @@ def calculate_brightness(
     blue: Union[float, "np.ndarray[Any, Any]"],
     brightness_formula: int = 1
 ) -> Union[float, "np.ndarray[Any, Any]"]:
-    print('current brightness_formula:', brightness_formula, '\n')
+    #print('current brightness_formula:', brightness_formula, '\n')
     if brightness_formula == 1: #套件原本的公式
-      print("brightness_formula 1 \n")
+      #print("brightness_formula 1 \n")
       cur_bright = (
           np.sqrt(0.241 * (red * red) + 0.691 * (green * green) + 0.068 * (blue * blue))
       ) / 255
     elif brightness_formula == 2: #常用公式
-      print("brightness_formula 2\n")
+      #print("brightness_formula 2\n")
       cur_bright = (
           0.2126 * red + 0.7152 * green + 0.0722 * blue
       ) / 255
@@ -153,6 +153,8 @@ class BrightnessProperty(ImageProperty):
             "dark_issue_data": pd.DataFrame,
             "threshold": float,
             "brightness_formula": int,
+            "brightness_percentile": int,
+            "use_avg": bool,
         }
 
         for name, value in kwargs.items():
@@ -169,21 +171,18 @@ class BrightnessProperty(ImageProperty):
 
     def __init__(self, issue_type: str) -> None:
         self.issue_type = issue_type
-        self._score_columns = [
-            (
-                "brightness_perc_99"
-                if self.issue_type == IssueType.DARK.value
-                else "brightness_perc_5"
-            )
-        ]
+        self._score_columns = [f"brightness_perc_{p}" for p in [1, 5, 10, 15, 25, 30, 40, 50, 60, 75, 90, 95, 99]]
+        self._score_columns.append(self.name)
 
     def calculate(self, image: Image, brightness_formula: int = 1) -> Dict[str, Union[float, str]]:
-        percentiles = [1, 5, 10, 15, 90, 95, 99]
+        #print('hello')
+        percentiles = [1, 5, 10, 15, 25, 30, 40, 50, 60, 75, 90, 95, 99]
         perc_values = calc_percentile_brightness(image, percentiles=percentiles, brightness_formula=brightness_formula)
         raw_values = {
             f"brightness_perc_{p}": value for p, value in zip(percentiles, perc_values)
         }
         raw_values[self.name] = calc_avg_brightness(image, brightness_formula=brightness_formula)
+        #print(raw_values)
         return raw_values
 
     def get_scores(
@@ -193,15 +192,34 @@ class BrightnessProperty(ImageProperty):
         **kwargs: Any,
     ) -> pd.DataFrame:
         super().get_scores(raw_scores, issue_type, **kwargs)
-        assert raw_scores is not None  # all values are between 0 and 1
-        scores = pd.DataFrame(index=raw_scores.index)
 
+        use_avg = kwargs.get("use_avg")
+        #只有use_avg是True的時候才會執行
+        if use_avg:  
+            self._score_columns = ['brightness']
+            print('self._score_columns: ',self._score_columns)
+            scores = pd.DataFrame(index=raw_scores.index)
+            scores[get_score_colname(issue_type)] = raw_scores['brightness']
+            return scores
+
+        #其他情況(use_avg是None或False)
+        brightness_percentile = kwargs.get("brightness_percentile")
+        if brightness_percentile is None:
+            brightness_percentile = 99 if issue_type == IssueType.DARK.value else 5
+        column_name = f"brightness_perc_{brightness_percentile}"
+        self._score_columns = [column_name]
+        print('self._score_columns: ',self._score_columns)
+        
+        scores = pd.DataFrame(index=raw_scores.index)
+        #print('raw_scores: ', raw_scores)
+        #print('scores: ',scores)
+        
         if issue_type == IssueType.DARK.value:
-            scores[get_score_colname(issue_type)] = raw_scores[self.score_columns[0]]
+            scores[get_score_colname(issue_type)] = raw_scores[column_name]
         else:
-            scores[get_score_colname(issue_type)] = (
-                1 - raw_scores[self.score_columns[0]]
-            )
+            scores[get_score_colname(issue_type)] = 1 - raw_scores[column_name]
+        
+        #print('scores(2): ',scores)
         return scores
 
 
