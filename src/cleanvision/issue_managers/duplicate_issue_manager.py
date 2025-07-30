@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 from tqdm.auto import tqdm
+from sklearn.cluster import HDBSCAN
+
 
 from cleanvision.dataset.base_dataset import Dataset
 from cleanvision.issue_managers import register_issue_manager, IssueType
@@ -65,7 +67,9 @@ class DuplicateIssueManager(IssueManager):
     def get_default_params(self) -> Dict[str, Any]:
         return {
             IssueType.EXACT_DUPLICATES.value: {"hash_type": "md5"},
-            IssueType.NEAR_DUPLICATES.value: {"hash_type": "phash", "hash_size": 8},
+            IssueType.NEAR_DUPLICATES.value: {"hash_type": "phash", "hash_size": 8, 
+                                              "mode": 0, #預設使用原本分群方式
+                                              "min_cluster_size": 2  }, #mode=1時才會用到
         }
 
     def update_params(self, params: Dict[str, Any]) -> None:
@@ -74,6 +78,7 @@ class DuplicateIssueManager(IssueManager):
                 k: v for k, v in params.get(issue_type, {}).items() if v is not None
             }
             self.params[issue_type] = {**self.params[issue_type], **non_none_params}
+            print(self.params)
 
     def _get_issue_types_to_compute(
         self, issue_types: List[str], imagelab_info: Dict[str, Any]
@@ -228,11 +233,20 @@ class DuplicateIssueManager(IssueManager):
         )
 
         if IssueType.NEAR_DUPLICATES.value in issue_types:
-            self.info[IssueType.NEAR_DUPLICATES.value] = {
-                SETS: self._get_duplicate_sets(
+            nd_params = self.params[IssueType.NEAR_DUPLICATES.value]
+            mode = nd_params.get("mode", 0)
+            print('mode: ', mode)
+            print('nd_params: ', nd_params)
+            if mode == 1:
+                sets = self._cluster_near_duplicates_with_hamming(
+                    issue_type_hash_mapping[IssueType.NEAR_DUPLICATES.value], nd_params
+                )
+            else:
+                sets = self._get_duplicate_sets(
                     issue_type_hash_mapping[IssueType.NEAR_DUPLICATES.value]
                 )
-            }
+
+            self.info[IssueType.NEAR_DUPLICATES.value] = {SETS: sets}
             self._remove_exact_duplicates_from_near()
             self.info[IssueType.NEAR_DUPLICATES.value][num_sets] = len(
                 self.info[IssueType.NEAR_DUPLICATES.value][SETS]
@@ -252,3 +266,34 @@ class DuplicateIssueManager(IssueManager):
             if len(images) > 1:
                 duplicate_sets.append(images)
         return duplicate_sets
+    
+    def _cluster_near_duplicates_with_hamming(
+        self, hash_image_mapping: Dict[str, List[int]],
+        params: Dict[str, Any]
+    ) -> List[List[int]]:
+
+        min_cluster_size = params.get("min_cluster_size", 2)
+
+        # Hashes 是唯一值，對應到多張圖
+        unique_hashes = list(hash_image_mapping.keys())
+        index_mapping = {i: hash_image_mapping[h] for i, h in enumerate(unique_hashes)}
+
+        # 將 hash 轉為 bit 向量
+        def hex_to_bits(h: str) -> np.ndarray:
+            return np.unpackbits(np.frombuffer(bytes.fromhex(h), dtype=np.uint8))
+
+        bit_matrix = np.array([hex_to_bits(h) for h in unique_hashes])
+
+        # 分群
+        clusterer = HDBSCAN(min_cluster_size=min_cluster_size, metric="hamming")
+        labels = clusterer.fit_predict(bit_matrix)
+
+        # 建立群組，將相同 cluster 的圖片合併
+        group_map = {}
+        for i, label in enumerate(labels):
+            if label == -1:
+                continue
+            group_map.setdefault(label, []).extend(index_mapping[i])
+
+        return [imgs for imgs in group_map.values() if len(imgs) > 1]
+
