@@ -47,6 +47,10 @@ def compute_hash(
     if image:
         for issue_type in to_compute:
             result[issue_type] = get_hash(image, params[issue_type])
+            if params[issue_type].get("hash_type") == "phash":
+                print(
+                    f"index: {index}, phash: {result[issue_type]}"
+                )
     return result
 
 
