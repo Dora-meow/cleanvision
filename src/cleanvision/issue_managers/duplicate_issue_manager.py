@@ -161,6 +161,23 @@ class DuplicateIssueManager(IssueManager):
 
             results = sorted(results, key=lambda r: r["index"])
 
+        # 根據每個 issue_type 的 output_hash 設定輸出 CSV
+        for issue_type in to_compute:
+            issue_params = self.params.get(issue_type, {})
+            if issue_params.get("output_hash", False):
+                rows = []
+                for r in results:
+                    if issue_type in r:
+                        rows.append({
+                            "index": r["index"],
+                            "hash": r[issue_type]
+                        })
+                df = pd.DataFrame(rows)
+                hash_type = issue_params.get("hash_type", "unknown")
+                csv_name = f"{issue_type}_{hash_type}_hashes.csv"
+                df.to_csv(csv_name, index=False)
+                print(f"[✔] Hash CSV saved: {csv_name}")
+
         for result in results:
             for issue_type in to_compute:
                 hash_str = result.get(issue_type, None)
