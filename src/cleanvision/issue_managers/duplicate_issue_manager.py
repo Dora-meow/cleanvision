@@ -694,7 +694,7 @@ class DuplicateIssueManager(IssueManager):
             params: Dict[str, Any],
         ) -> List[List[int]]:
         """
-        mode=5: pHash bit -> (PCA | MCA | FAMD) -> pairwise distances (euclidean by default) ->
+        mode=5: pHash bit -> (PCA | MCA | FAMD | logical_pca ) -> pairwise distances (euclidean by default) ->
                 AgglomerativeClustering（最大跳躍法自動決定切點/群數）。
         * PCA：連續空間；適合把 bit 當數值信號
         * MCA：類別空間（bit 視為類別 0/1），需要 prince；失敗則退回 PCA
@@ -703,15 +703,12 @@ class DuplicateIssueManager(IssueManager):
         - linkage: 'average' | 'complete' | 'single' ...
         - dim_method: 'pca' | 'mca' | 'famd'（預設 pca）
         - pca_components: int（目標維度上限）
-        - pca_whiten: bool（PCA 用）
+        - pca_whiten: bool（PCA 用）(每個特徵向量除以其標準差)
         - dim_metric: 距離度量（預設 'euclidean'）
         """
-        from sklearn.decomposition import PCA
-        from sklearn.metrics import pairwise_distances
-        from sklearn.cluster import AgglomerativeClustering
 
         linkage = params.get("linkage", "average")
-        dim_method = str(params.get("dim_method", "pca")).lower()   # 'pca' | 'mca' | 'famd'
+        dim_method = str(params.get("dim_method", "pca")).lower()   # 'pca' | 'mca' | 'famd' | 'logistic_pca'
         n_comp = int(params.get("pca_components", 20))              # 與舊參數相容
         whiten = bool(params.get("pca_whiten", True))
         dim_metric = params.get("dim_metric", params.get("pca_metric", "euclidean"))
@@ -736,6 +733,77 @@ class DuplicateIssueManager(IssueManager):
             bit_f = bit_matrix.astype(np.float32)
             pca = PCA(n_components=n_components, whiten=whiten, random_state=0)
             X = pca.fit_transform(bit_f)
+
+        elif dim_method == "logistic_pca":
+            try:
+                # 專門處理 0/1 資料的 Logistic PCA（機率式），
+                # 計算較慢、可能不收斂，但在二元資料上理論上更貼近。
+                from logisticpca import LogisticPCA
+
+                # 將 bit 矩陣轉成 float64（套件多半以雙精度運算較穩定）
+                bit_f = bit_matrix.astype(np.float64, copy=False)
+
+                # 決定實際要用的降維維度（不能超過樣本數-1，也不能超過特徵數）
+                n_eff = max(1, min(n_components, bit_f.shape[1], bit_f.shape[0] - 1))
+                m_val   = 5  # 多數實作的預設截斷強度
+
+                # 僅傳必要與已知的參數，降低與舊版/新版套件簽名不合的風險
+                lpca = LogisticPCA(n_features=bit_matrix.shape[1], n_components=n_eff, m=m_val)
+
+                # 偵測是否為 torch 版（模型內含 Parameter）
+                use_torch = False
+                try:
+                    import torch, torch.nn as nn
+                    use_torch = any(isinstance(getattr(lpca, name), nn.Parameter)
+                                    for name in dir(lpca))
+                except Exception:
+                    use_torch = False
+
+                # 餵資料：torch 版就給 tensor；否則給 numpy
+                if use_torch:
+                    import torch
+                    X_in = torch.as_tensor(bit_f, dtype=torch.float32)
+                else:
+                    X_in = bit_f
+
+                # fit / transform 相容處理
+                if hasattr(lpca, "fit_transform"):
+                    X_out = lpca.fit_transform(X_in)
+                else:
+                    lpca.fit(X_in)
+                    if hasattr(lpca, "transform"):
+                        X_out = lpca.transform(X_in)
+                    elif hasattr(lpca, "scores_"):
+                        X_out = lpca.scores_
+                    else:
+                        raise AttributeError("LogisticPCA fitted but no transform/scores_")
+
+                # 轉回 numpy float32
+                if use_torch and hasattr(X_out, "detach"):
+                    X = X_out.detach().cpu().numpy().astype(np.float32, copy=False)
+                else:
+                    X = np.asarray(X_out, dtype=np.float32)
+                    
+            except Exception as e:
+                # 若無法匯入或訓練失敗（不收斂/數值問題），退回輕量近似：logical_pca
+                # （先做 Bernoulli 標準化，再跑一般 PCA）
+                print(f"[WARN] LogisticPCA 不可用或失敗，改用 logical_pca。原因: {e}")
+
+                # Bernoulli 標準化：對每一維用 p(1-p) 做標準化，p=0/1 無變異者移除
+                eps = 1e-12
+                p_hat = bit_matrix.mean(axis=0, dtype=np.float64) # 每一維的 1 的比例
+                var = p_hat * (1.0 - p_hat)                           # Bernoulli 變異 p(1-p)
+                keep = var > eps                              # 只保留有變異的維度
+                if not np.any(keep):
+                    # 萬一所有 bit 都常數，退回普通 PCA（會得到零向量）
+                    bit_f = bit_matrix.astype(np.float32)
+                    pca = PCA(n_components=n_components, whiten=whiten, random_state=0)
+                    X = pca.fit_transform(bit_f)
+                else:
+                    Z = (bit_matrix[:, keep] - p_hat[keep]) / np.sqrt(var[keep])
+                    Z = Z.astype(np.float32, copy=False)
+                    pca = PCA(n_components=min(n_components, Z.shape[1]), whiten=whiten, random_state=0)
+                    X = pca.fit_transform(Z)
 
         elif dim_method in ("mca", "famd"):
             try:
