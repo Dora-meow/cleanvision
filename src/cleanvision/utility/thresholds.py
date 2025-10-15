@@ -1,7 +1,69 @@
 import numpy as np
 from scipy.special import digamma, polygamma #gamma_gamma 那個會用到
 from scipy.stats import gamma as sp_gamma
+from sklearn.metrics import f1_score
 
+
+# === 算 F1 ===
+def f1_for_threshold(thr, X, y):
+    if thr is None:
+        return None
+    y_pred = (X < thr).astype(int)  # < thr 視為調整過 (positive class)
+    return f1_score(y, y_pred)
+
+# === 算 F1(0是正類) ===
+def f1_for_threshold_0(thr, X, y):
+    if thr is None:
+        return None
+    y_pred = (X < thr).astype(int)  # < thr 視為調整過 (positive class)
+    return f1_score(y, y_pred, pos_label=0)
+
+# === 算 F1(都考慮) ===
+def f1_for_threshold_wei(thr, X, y):
+    if thr is None:
+        return None
+    y_pred = (X < thr).astype(int)  # < thr 視為調整過 (positive class)
+    return f1_score(y, y_pred, average='weighted')
+
+def f1_for_threshold_mix(thr1, thr2, vals1, vals2, y_true):
+    """
+    thr1: 第一個異常的門檻 (小於 => 視為異常)
+    thr2: 第二個異常的門檻 (小於 => 視為異常)
+    vals1: 第一個異常的分數 (例如 light_score)
+    vals2: 第二個異常的分數 (例如 blur_score)
+    y_true: 真實標籤 (1=異常, 0=正常)
+    """
+    if thr1 is None or thr2 is None:
+        return None, None
+
+    cond1 = (vals1 < thr1)  # 第一個異常
+    cond2 = (vals2 < thr2)  # 第二個異常
+
+    # 只要符合任一條件，就判斷為異常
+    y_pred = (cond1 | cond2).astype(int)
+
+    return f1_score(y_true, y_pred), y_pred
+
+
+def f1_for_threshold_mix_0(thr1, thr2, vals1, vals2, y_true):
+    if thr1 is None or thr2 is None:
+        return None, None
+    cond1 = (vals1 < thr1)  # 第一個異常
+    cond2 = (vals2 < thr2)  # 第二個異常
+
+    # 只要符合任一條件，就判斷為異常
+    y_pred = (cond1 | cond2).astype(int)
+    return f1_score(y_true, y_pred, pos_label=0), y_pred
+
+def f1_for_threshold_mix_wei(thr1, thr2, vals1, vals2, y_true):
+    if thr1 is None or thr2 is None:
+        return None, None
+    cond1 = (vals1 < thr1)  # 第一個異常
+    cond2 = (vals2 < thr2)  # 第二個異常
+
+    # 只要符合任一條件，就判斷為異常
+    y_pred = (cond1 | cond2).astype(int)
+    return f1_score(y_true, y_pred, average='weighted'), y_pred
 
 
 # --------------- (A) 用 scikit-image 的 Otsu（若可用） ---------------

@@ -6,6 +6,12 @@ Usage:
 """
 
 from .thresholds import (
+    f1_for_threshold,
+    f1_for_threshold_0,
+    f1_for_threshold_wei,
+    f1_for_threshold_mix,
+    f1_for_threshold_mix_0,
+    f1_for_threshold_mix_wei,
     otsu_skimage,
     otsu_numpy,
     ki_min_error_threshold,
@@ -18,6 +24,12 @@ from .thresholds import (
 )
 
 __all__ = [
+    "f1_for_threshold",
+    "f1_for_threshold_0",
+    "f1_for_threshold_wei",
+    "f1_for_threshold_mix",
+    "f1_for_threshold_mix_0",
+    "f1_for_threshold_mix_wei",
     "otsu_skimage",
     "otsu_numpy",
     "ki_min_error_threshold",
